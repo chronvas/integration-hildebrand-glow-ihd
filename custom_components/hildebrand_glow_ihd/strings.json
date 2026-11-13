@@ -17,6 +17,7 @@
           "name": "Name",
           "device_id": "Device ID",
           "topic_prefix": "Topic prefix",
+          "electricity_tariff_type": "Electricity tariff type",
           "time_zone_electricity": "Electricity meter time zone",
           "time_zone_gas": "Gas meter time zone"
         },
@@ -24,20 +25,23 @@
           "name": "Used for the device's name and the start of new entity IDs, e.g. Home gives sensor.home_electricity_import.",
           "device_id": "Leave as + to detect every Glow device publishing to your MQTT broker. To read one device only, enter its ID from its topics, e.g. AABBCCDDEEFF in glow/AABBCCDDEEFF/STATE.",
           "topic_prefix": "The first part of the device's MQTT topics. Leave as glow unless you changed it on the device.",
+          "electricity_tariff_type": "Choose fixed if your electricity unit rate stays the same during the meter day. Choose variable to track Electricity: Cost (Today) across unit rate changes.",
           "time_zone_electricity": "The time zone the electricity meter's daily totals reset in.",
           "time_zone_gas": "The time zone the gas meter's daily totals reset in. Some gas meters reset at midnight UTC, if yours does choose UTC."
         }
       },
       "discovery_confirm": {
         "title": "Hildebrand Glow IHD Integration",
-        "description": "Found Glow device {device_id} publishing to your MQTT broker. Give it a name, choose the time zones its meters use, then submit to add it.",
+        "description": "Found Glow device {device_id} publishing to your MQTT broker. Give it a name, choose the electricity tariff type and the time zones its meters use, then submit to add it.",
         "data": {
           "name": "Name",
+          "electricity_tariff_type": "Electricity tariff type",
           "time_zone_electricity": "Electricity meter time zone",
           "time_zone_gas": "Gas meter time zone"
         },
         "data_description": {
           "name": "Used for the device's name and the start of new entity IDs, e.g. Home gives sensor.home_electricity_import.",
+          "electricity_tariff_type": "Choose fixed if your electricity unit rate stays the same during the meter day. Choose variable to track Electricity: Cost (Today) across unit rate changes.",
           "time_zone_electricity": "The time zone the electricity meter's daily totals reset in.",
           "time_zone_gas": "The time zone the gas meter's daily totals reset in. Some gas meters reset at midnight UTC, if yours does choose UTC."
         }

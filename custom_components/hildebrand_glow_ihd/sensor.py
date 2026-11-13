@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime
+from math import isfinite
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import mqtt
@@ -33,6 +35,7 @@ from .const import (
     DEFAULT_DEVICE_ID,
     DEFAULT_NAME,
     DOMAIN,
+    ELECTRICITY_TARIFF_TYPE_VARIABLE,
     POWER_ERROR_VALUE,
     MeterInterval,
     TopicKind,
@@ -532,11 +535,12 @@ class GlowMessageHandler:
         self._settings.devices[device_id] = device_state
         sensors = {
             kind: [
-                (
-                    GlowPeriodVolumeSensor
-                    if description.volume_interval is not None
-                    else GlowSensor
-                )(device_id, description, self._time_zones[kind], device_state)
+                self._sensor_class(description)(
+                    device_id,
+                    description,
+                    self._time_zones[kind],
+                    device_state,
+                )
                 for description in descriptions
             ]
             for kind, descriptions in DESCRIPTIONS_BY_KIND.items()
@@ -552,6 +556,21 @@ class GlowMessageHandler:
             no_messages_issue_id(self._entry.entry_id),
         )
         return sensors
+
+    def _sensor_class(
+        self,
+        description: GlowSensorEntityDescription,
+    ) -> type[GlowSensor]:
+        """Choose the sensor implementation for a description and tariff mode."""
+        if description.volume_interval is not None:
+            return GlowPeriodVolumeSensor
+        if (
+            self._settings.electricity_tariff_type
+            == ELECTRICITY_TARIFF_TYPE_VARIABLE
+            and description.key == "electricity_cost_today"
+        ):
+            return GlowVariableElectricityCostSensor
+        return GlowSensor
 
     @callback
     def _async_write_device_sensors(self, device_id: str) -> None:
@@ -915,3 +934,174 @@ class GlowPeriodVolumeSensor(GlowSensor, RestoreEntity):
         if (value := self._read_value(message)) is None:
             value = calculated
         self._async_set_value(value)
+
+
+class GlowVariableElectricityCostSensor(GlowSensor, RestoreEntity):
+    """Accumulate today's electricity cost across changes in the unit rate."""
+
+    def __init__(
+        self,
+        device_id: str,
+        description: GlowSensorEntityDescription,
+        time_zone: tzinfo | None,
+        device_state: GlowDeviceState,
+    ) -> None:
+        """Initialise the sensor and its restorable cost tracker."""
+        super().__init__(device_id, description, time_zone, device_state)
+        self._energy_cost = 0.0
+        self._previous_kwh: float | None = None
+        self._previous_rate: float | None = None
+        self._standing_charge: float | None = None
+        self._last_reset: datetime | None = None
+        self._last_message_time: datetime | None = None
+        self._restored = False
+        self._pending_message: GlowMessage | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore the cost tracker, then process any pending MQTT message."""
+        await super().async_added_to_hass()
+        if (data := await self.async_get_last_extra_data()) is not None:
+            restored = data.as_dict()
+            restored_cost = self._number_or_none(
+                restored.get("energy_cost"),
+            )
+            self._energy_cost = restored_cost if restored_cost is not None else 0.0
+            self._previous_kwh = self._number_or_none(
+                restored.get("previous_kwh"),
+            )
+            self._previous_rate = self._number_or_none(
+                restored.get("previous_rate"),
+            )
+            self._standing_charge = self._number_or_none(
+                restored.get("standing_charge"),
+            )
+            self._last_reset = self._datetime_or_none(
+                restored.get("last_reset"),
+            )
+            self._last_message_time = self._datetime_or_none(
+                restored.get("last_message_time"),
+            )
+        self._restored = True
+        if (message := self._pending_message) is not None:
+            self._pending_message = None
+            self.async_process_message(message)
+
+    @property
+    def extra_restore_state_data(self) -> RestoredExtraData:
+        """Return the cost tracker values to store across restarts."""
+        return RestoredExtraData(
+            {
+                "energy_cost": self._energy_cost,
+                "previous_kwh": self._previous_kwh,
+                "previous_rate": self._previous_rate,
+                "standing_charge": self._standing_charge,
+                "last_reset": (
+                    self._last_reset.isoformat() if self._last_reset else None
+                ),
+                "last_message_time": (
+                    self._last_message_time.isoformat()
+                    if self._last_message_time
+                    else None
+                ),
+            },
+        )
+
+    @staticmethod
+    def _number_or_none(value: Any) -> float | None:
+        """Return a finite number, or None for missing or unusable data."""
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if isfinite(number) else None
+
+    @staticmethod
+    def _datetime_or_none(value: Any) -> datetime | None:
+        """Return a restored time if it is a valid ISO datetime."""
+        if not isinstance(value, str):
+            return None
+        try:
+            restored = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        return restored if restored.tzinfo is not None else None
+
+    @callback
+    def async_process_message(self, message: GlowMessage) -> None:
+        """Accrue energy at the rate that applied before this reading."""
+        if not self._restored:
+            self._pending_message = message
+            return
+
+        if message.timestamp is None or self._time_zone is None:
+            _LOGGER.debug(
+                "Can't update variable electricity cost for %s without a"
+                " message timestamp and meter time zone",
+                self.unique_id,
+            )
+            return
+        if (
+            self._last_message_time is not None
+            and message.timestamp < self._last_message_time
+        ):
+            _LOGGER.debug("Ignored an older reading for %s", self.unique_id)
+            return
+
+        try:
+            energy_import = message.payload["electricitymeter"]["energy"][
+                "import"
+            ]
+            today_kwh = self._number_or_none(energy_import.get("day"))
+            price = energy_import.get("price") or {}
+        except (AttributeError, KeyError, TypeError):
+            self._async_set_value(None)
+            return
+        if today_kwh is None:
+            self._async_set_value(None)
+            return
+
+        if not isinstance(price, dict):
+            self._async_set_value(None)
+            return
+        unit_rate = self._number_or_none(price.get("unitrate"))
+        standing_charge = self._number_or_none(price.get("standingcharge"))
+        if standing_charge is not None:
+            self._standing_charge = standing_charge
+        if (
+            unit_rate is None
+            and self._previous_rate is None
+            and self._standing_charge is None
+        ):
+            self._async_set_value(None)
+            return
+
+        interval_start = determine_last_reset(
+            message.timestamp,
+            self._time_zone,
+            MeterInterval.DAY,
+        )
+        if self._last_reset != interval_start or self._previous_kwh is None:
+            # On first setup or the first reading of a new meter day, price
+            # usage already reported at the rate currently known to the IHD.
+            rate_for_day = (
+                unit_rate if unit_rate is not None else self._previous_rate
+            )
+            self._energy_cost = today_kwh * (rate_for_day or 0.0)
+            self._previous_kwh = today_kwh if rate_for_day is not None else None
+            self._previous_rate = rate_for_day
+        else:
+            delta_kwh = max(today_kwh - self._previous_kwh, 0.0)
+            rate_for_delta = self._previous_rate
+            if rate_for_delta is not None:
+                self._energy_cost += delta_kwh * rate_for_delta
+                self._previous_kwh = today_kwh
+            if unit_rate is not None:
+                self._previous_rate = unit_rate
+        self._last_reset = interval_start
+        self._last_message_time = message.timestamp
+        self._attr_last_reset = interval_start
+        self._async_set_value(
+            round(self._energy_cost + (self._standing_charge or 0.0), 2),
+        )

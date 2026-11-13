@@ -19,13 +19,17 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_ELECTRICITY_TARIFF_TYPE,
     CONF_TIME_ZONE_ELECTRICITY,
     CONF_TIME_ZONE_GAS,
     CONF_TOPIC_PREFIX,
     DEFAULT_DEVICE_ID,
+    DEFAULT_ELECTRICITY_TARIFF_TYPE,
     DEFAULT_NAME,
     DEFAULT_TOPIC_PREFIX,
     DOMAIN,
+    ELECTRICITY_TARIFF_TYPE_FIXED,
+    ELECTRICITY_TARIFF_TYPE_VARIABLE,
 )
 from .helpers import (
     entry_title,
@@ -73,6 +77,35 @@ def _device_schema(defaults: Mapping[str, Any]) -> dict[vol.Marker, Any]:
             CONF_TOPIC_PREFIX,
             default=defaults.get(CONF_TOPIC_PREFIX, DEFAULT_TOPIC_PREFIX),
         ): str,
+    }
+
+
+def _electricity_tariff_schema(
+    defaults: Mapping[str, Any],
+) -> dict[vol.Marker, Any]:
+    """Return the form field for fixed or variable electricity rates."""
+    return {
+        vol.Required(
+            CONF_ELECTRICITY_TARIFF_TYPE,
+            default=defaults.get(
+                CONF_ELECTRICITY_TARIFF_TYPE,
+                DEFAULT_ELECTRICITY_TARIFF_TYPE,
+            ),
+        ): SelectSelector(
+            SelectSelectorConfig(
+                options=[
+                    {
+                        "value": ELECTRICITY_TARIFF_TYPE_FIXED,
+                        "label": "Fixed tariff",
+                    },
+                    {
+                        "value": ELECTRICITY_TARIFF_TYPE_VARIABLE,
+                        "label": "Variable tariff",
+                    },
+                ],
+                mode=SelectSelectorMode.DROPDOWN,
+            ),
+        ),
     }
 
 
@@ -174,6 +207,7 @@ class HildebrandGlowIHDMQTTConfigFlow(ConfigFlow, domain=DOMAIN):
                 {  # type: ignore[arg-type]
                     **_name_schema(defaults),
                     **_device_schema(defaults),
+                    **_electricity_tariff_schema(defaults),
                     **await _async_time_zone_schema(self.hass, defaults),
                 },
             ),
@@ -204,7 +238,7 @@ class HildebrandGlowIHDMQTTConfigFlow(ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
-        """Confirm adding a discovered Glow device and choose its time zones."""
+        """Confirm adding a discovered Glow device and choose its settings."""
         device_id = self._discovered_device_id
         if user_input is not None:
             return self.async_create_entry(
@@ -222,6 +256,7 @@ class HildebrandGlowIHDMQTTConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema(
                 {  # type: ignore[arg-type]
                     **_name_schema({}),
+                    **_electricity_tariff_schema({}),
                     **await _async_time_zone_schema(self.hass, {}),
                 },
             ),

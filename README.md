@@ -47,7 +47,7 @@ The integration works with any device that publishes Glow's local MQTT messages:
 
 ## Configuration
 
-Once your Glow device publishes to your broker, Home Assistant finds it and shows it under **Settings → Devices & services → Discovered**. Select **Add**, choose the meters' time zones, and submit. Discovery only looks for the default `glow` topic prefix.
+Once your Glow device publishes to your broker, Home Assistant finds it and shows it under **Settings → Devices & services → Discovered**. Select **Add**, choose the electricity tariff type and the meters' time zones, and submit. Discovery only looks for the default `glow` topic prefix.
 
 To add it yourself instead, go to **Settings → Devices & services → Add integration** and search for **Hildebrand Glow IHD Integration**.
 
@@ -56,6 +56,7 @@ To add it yourself instead, go to **Settings → Devices & services → Add inte
 | Name                        | `Glow`            | The device's name, and the start of new entity IDs. For example, `Home` gives `sensor.home_electricity_import`.                                                                                                      |
 | Device ID                   | `+`               | Leave as `+` to detect every Glow device publishing to your broker (recommended). To limit it to one device, enter that device's ID: the part of the topic after the prefix, e.g. `glow/`**`AABBCCDDEEFF`**`/STATE`. |
 | Topic prefix                | `glow`            | The first part of the MQTT topic. Only change this if you changed it on the device.                                                                                                                                  |
+| Electricity tariff type     | Fixed             | Choose **Variable** if the electricity unit rate changes during the meter day. This accumulates **Electricity: Cost (Today)** across reported rate changes.                                                        |
 | Electricity meter time zone | Your HA time zone | The time zone your electricity meter's daily total resets in.                                                                                                                                                        |
 | Gas meter time zone         | Your HA time zone | The time zone your gas meter's daily total resets in. Some gas meters reset at midnight UTC (01:00 during British Summer Time). If yours does, choose `UTC`.                                                         |
 
@@ -79,7 +80,7 @@ Home Assistant shows each sensor after its device's name, e.g. **Home Electricit
 | Electricity: Power                                   | W       | Current demand                              |
 | Electricity: Import Unit Rate                        | GBP/kWh | Current unit rate, no long-term statistics  |
 | Electricity: Import Standing Charge                  | GBP     | Daily standing charge, no long-term stats   |
-| Electricity: Cost (Today)                            | GBP     | Standing charge + today's usage × unit rate |
+| Electricity: Cost (Today)                            | GBP     | Fixed tariff: standing charge + today's usage × current rate. Variable tariff: usage is accumulated across rate changes. |
 | Electricity: Cost (This week / This month)           | GBP     | Standing charges + usage × unit rate        |
 
 ### Gas
@@ -97,7 +98,9 @@ Home Assistant shows each sensor after its device's name, e.g. **Home Electricit
 
 **Electricity: Power** is shown in W on new installs. A power sensor you already have keeps the unit it had, kW unless you changed it. To show it in W, open the sensor's settings and set **Unit of measurement** to W. Automations and dashboards that compare it with a number in kW then need that number in W.
 
-**Cost (This week)** and **Cost (This month)** are worked out from the meter's kWh for the week or month: a standing charge for each day so far, plus the kWh at the unit rate. Weeks start on Monday, like the meter's weekly totals. The IHD only reports the current prices, so a week or month in which your prices changed is priced at the new ones. Use these instead of a Utility Meter helper on **Cost (Today)**: at midnight that cost falls to the day's standing charge rather than to 0, so a Utility Meter misses the standing charge every day.
+In **Variable** tariff mode, **Electricity: Cost (Today)** adds each increase in the meter's day kWh at the rate from the previous reading, then uses the newly reported rate for later usage. The running cost is restored across Home Assistant restarts. On the first reading after setup or a meter-day reset, the usage already reported for that day is priced at the current rate. Usage between readings is necessarily assigned to the rate from the previous reading.
+
+**Cost (This week)** and **Cost (This month)** are worked out from the meter's kWh for the week or month: a standing charge for each day so far, plus the kWh at the current unit rate. Weeks start on Monday, like the meter's weekly totals. The IHD only reports the current prices, so a week or month in which your prices changed is priced at the new ones, even when Variable tariff mode is selected. Use these instead of a Utility Meter helper on **Cost (Today)**: at midnight that cost falls to the day's standing charge rather than to 0, so a Utility Meter misses the standing charge every day.
 
 There is no live gas power sensor: the IHD stopped publishing gas power in software update 1.8.13 (June 2022).
 
@@ -225,6 +228,7 @@ logger:
 ## Known limitations
 
 - Prices are always shown in GBP, the currency the device reports for UK meters.
+- Variable tariff tracking applies to **Electricity: Cost (Today)**. It cannot split usage within the interval between meter messages; the first reading after setup or a meter-day reset uses the current rate for that day's usage so far. Weekly and monthly cost sensors use the current rate.
 - When the device reports the day, week and month gas volumes in kWh, they are worked out from the lifetime volume, see [Gas](#gas). The first period after setup is short, and periods that started while Home Assistant was off are estimates.
 - There is no gas power sensor, see [Gas](#gas).
 - Discovery only finds devices using the default `glow` topic prefix. Add other prefixes by hand.

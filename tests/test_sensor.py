@@ -20,7 +20,12 @@ from pytest_homeassistant_custom_component.common import (
     mock_restore_cache_with_extra_data,
 )
 
-from custom_components.hildebrand_glow_ihd.const import AVAILABILITY_TIMEOUT, DOMAIN
+from custom_components.hildebrand_glow_ihd.const import (
+    AVAILABILITY_TIMEOUT,
+    CONF_ELECTRICITY_TARIFF_TYPE,
+    DOMAIN,
+    ELECTRICITY_TARIFF_TYPE_VARIABLE,
+)
 
 from .const import (
     DEVICE_ID,
@@ -976,6 +981,106 @@ async def test_period_cost(
     await hass.async_block_till_done()
     week = _state(hass, _entity_id(hass, "electricity_cost_this_week"))
     assert week.state == STATE_UNKNOWN
+
+
+async def test_variable_electricity_cost_tracks_rate_changes_and_meter_day(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,  # noqa: ARG001
+    config_entry: MockConfigEntry,
+) -> None:
+    """Variable mode uses the previous rate for each energy increment."""
+    variable_entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=config_entry.title,
+        unique_id=config_entry.unique_id,
+        data={
+            **config_entry.data,
+            CONF_ELECTRICITY_TARIFF_TYPE: ELECTRICITY_TARIFF_TYPE_VARIABLE,
+        },
+        minor_version=config_entry.minor_version,
+    )
+    await _setup(hass, variable_entry)
+
+    payload: dict[str, Any] = json.loads(json.dumps(ELECTRICITY_PAYLOAD))
+    meter = payload["electricitymeter"]
+    energy_import = meter["energy"]["import"]
+    meter["timestamp"] = "2026-11-14T10:00:00Z"
+    energy_import.update(
+        {"day": 10.0, "price": {"unitrate": 0.1, "standingcharge": 0.5}},
+    )
+    _publish(hass, ELECTRICITY_TOPIC, payload)
+    await hass.async_block_till_done()
+    cost = _state(hass, _entity_id(hass, "electricity_cost_today"))
+    assert cost.state == "1.5"
+
+    meter["timestamp"] = "2026-11-14T11:00:00Z"
+    energy_import.update(
+        {"day": 12.0, "price": {"unitrate": 0.3, "standingcharge": 0.5}},
+    )
+    _publish(hass, ELECTRICITY_TOPIC, payload)
+    await hass.async_block_till_done()
+    cost = _state(hass, _entity_id(hass, "electricity_cost_today"))
+    assert cost.state == "1.7"
+
+    meter["timestamp"] = "2026-11-14T12:00:00Z"
+    energy_import["day"] = 13.5
+    _publish(hass, ELECTRICITY_TOPIC, payload)
+    await hass.async_block_till_done()
+    cost = _state(hass, _entity_id(hass, "electricity_cost_today"))
+    assert cost.state == "2.15"
+
+    meter["timestamp"] = "2026-11-15T01:00:00Z"
+    energy_import.update(
+        {"day": 1.0, "price": {"unitrate": 0.4, "standingcharge": 0.5}},
+    )
+    _publish(hass, ELECTRICITY_TOPIC, payload)
+    await hass.async_block_till_done()
+    cost = _state(hass, _entity_id(hass, "electricity_cost_today"))
+    assert cost.state == "0.9"
+    assert cost.attributes["last_reset"] == "2026-11-15T00:00:00+00:00"
+
+
+async def test_variable_electricity_cost_restores_tracker(
+    hass: HomeAssistant,
+    mqtt_mock: MqttMockHAClient,  # noqa: ARG001
+    config_entry: MockConfigEntry,
+) -> None:
+    """The previous reading and rate survive Home Assistant restarts."""
+    variable_entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=config_entry.title,
+        unique_id=config_entry.unique_id,
+        data={
+            **config_entry.data,
+            CONF_ELECTRICITY_TARIFF_TYPE: ELECTRICITY_TARIFF_TYPE_VARIABLE,
+        },
+        minor_version=config_entry.minor_version,
+    )
+    stored = {
+        "energy_cost": 1.2,
+        "previous_kwh": 10.0,
+        "previous_rate": 0.1,
+        "standing_charge": 0.5,
+        "last_reset": "2026-11-14T00:00:00+00:00",
+        "last_message_time": "2026-11-14T10:00:00+00:00",
+    }
+    mock_restore_cache_with_extra_data(
+        hass,
+        [(State("sensor.home_electricity_cost_today", "1.7"), stored)],
+    )
+    await _setup(hass, variable_entry)
+
+    payload: dict[str, Any] = json.loads(json.dumps(ELECTRICITY_PAYLOAD))
+    meter = payload["electricitymeter"]
+    meter["timestamp"] = "2026-11-14T11:00:00Z"
+    meter["energy"]["import"].update(
+        {"day": 12.0, "price": {"unitrate": 0.3, "standingcharge": 0.5}},
+    )
+    _publish(hass, ELECTRICITY_TOPIC, payload)
+    await hass.async_block_till_done()
+
+    cost = _state(hass, _entity_id(hass, "electricity_cost_today"))
+    assert cost.state == "1.9"
 
 
 def _gas_payload(timestamp: str, volume: float, units: str = "kWh") -> dict[str, Any]:
