@@ -1012,6 +1012,18 @@ async def test_variable_electricity_cost_tracks_rate_changes_and_meter_day(
     await hass.async_block_till_done()
     cost = _state(hass, _entity_id(hass, "electricity_cost_today"))
     assert cost.state == "1.5"
+    entity_registry = er.async_get(hass)
+    assert entity_registry.async_get_entity_id(
+        "sensor",
+        DOMAIN,
+        f"{DEVICE_ID.lower()}_electricity_import_this_week",
+    ) is not None
+    for interval in ("week", "month"):
+        assert entity_registry.async_get_entity_id(
+            "sensor",
+            DOMAIN,
+            f"{DEVICE_ID.lower()}_electricity_cost_this_{interval}",
+        ) is None
 
     meter["timestamp"] = "2026-11-14T11:00:00Z"
     energy_import.update(

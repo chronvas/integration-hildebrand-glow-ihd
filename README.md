@@ -81,7 +81,7 @@ Home Assistant shows each sensor after its device's name, e.g. **Home Electricit
 | Electricity: Import Unit Rate                        | GBP/kWh | Current unit rate, no long-term statistics  |
 | Electricity: Import Standing Charge                  | GBP     | Daily standing charge, no long-term stats   |
 | Electricity: Cost (Today)                            | GBP     | Fixed tariff: standing charge + today's usage × current rate. Variable tariff: usage is accumulated across rate changes. |
-| Electricity: Cost (This week / This month)           | GBP     | Standing charges + usage × unit rate        |
+| Electricity: Cost (This week / This month)           | GBP     | Fixed tariff only: standing charges + usage × unit rate |
 
 ### Gas
 
@@ -100,7 +100,7 @@ Home Assistant shows each sensor after its device's name, e.g. **Home Electricit
 
 In **Variable** tariff mode, **Electricity: Cost (Today)** adds each increase in the meter's day kWh at the rate from the previous reading, then uses the newly reported rate for later usage. The running cost is restored across Home Assistant restarts. On the first reading after setup or a meter-day reset, the usage already reported for that day is priced at the current rate. Usage between readings is necessarily assigned to the rate from the previous reading.
 
-**Cost (This week)** and **Cost (This month)** are worked out from the meter's kWh for the week or month: a standing charge for each day so far, plus the kWh at the current unit rate. Weeks start on Monday, like the meter's weekly totals. The IHD only reports the current prices, so a week or month in which your prices changed is priced at the new ones, even when Variable tariff mode is selected. Use these instead of a Utility Meter helper on **Cost (Today)**: at midnight that cost falls to the day's standing charge rather than to 0, so a Utility Meter misses the standing charge every day.
+In **Fixed** tariff mode, **Cost (This week)** and **Cost (This month)** are worked out from the meter's kWh for the week or month: a standing charge for each day so far, plus the kWh at the current unit rate. Weeks start on Monday, like the meter's weekly totals. These sensors aren't created in **Variable** tariff mode. The IHD reports period kWh totals but doesn't provide a breakdown by rate or historical prices. If Home Assistant misses a reading or the rate changes between readings, the integration can't determine which rate applies to the unobserved usage, so a weekly or monthly cost could be misleading. The period kWh sensors remain available. Use the cost sensors instead of a Utility Meter helper on **Cost (Today)**: at midnight that cost falls to the day's standing charge rather than to 0, so a Utility Meter misses the standing charge every day.
 
 There is no live gas power sensor: the IHD stopped publishing gas power in software update 1.8.13 (June 2022).
 
@@ -228,7 +228,7 @@ logger:
 ## Known limitations
 
 - Prices are always shown in GBP, the currency the device reports for UK meters.
-- Variable tariff tracking applies to **Electricity: Cost (Today)**. It cannot split usage within the interval between meter messages; the first reading after setup or a meter-day reset uses the current rate for that day's usage so far. Weekly and monthly cost sensors use the current rate.
+- Variable tariff tracking applies to **Electricity: Cost (Today)**. It cannot split usage within the interval between meter messages; the first reading after setup or a meter-day reset uses the current rate for that day's usage so far. Weekly and monthly electricity cost sensors are omitted in Variable mode because the IHD doesn't provide the rate history needed to price their period kWh accurately.
 - When the device reports the day, week and month gas volumes in kWh, they are worked out from the lifetime volume, see [Gas](#gas). The first period after setup is short, and periods that started while Home Assistant was off are estimates.
 - There is no gas power sensor, see [Gas](#gas).
 - Discovery only finds devices using the default `glow` topic prefix. Add other prefixes by hand.

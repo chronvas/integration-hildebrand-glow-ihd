@@ -542,6 +542,7 @@ class GlowMessageHandler:
                     device_state,
                 )
                 for description in descriptions
+                if self._should_create_sensor(description)
             ]
             for kind, descriptions in DESCRIPTIONS_BY_KIND.items()
         }
@@ -556,6 +557,18 @@ class GlowMessageHandler:
             no_messages_issue_id(self._entry.entry_id),
         )
         return sensors
+
+    def _should_create_sensor(
+        self,
+        description: GlowSensorEntityDescription,
+    ) -> bool:
+        """Omit electricity period-cost estimates for variable rates."""
+        return not (
+            self._settings.electricity_tariff_type
+            == ELECTRICITY_TARIFF_TYPE_VARIABLE
+            and description.key
+            in {"electricity_cost_week", "electricity_cost_month"}
+        )
 
     def _sensor_class(
         self,
