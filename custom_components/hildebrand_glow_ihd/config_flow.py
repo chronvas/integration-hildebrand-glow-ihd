@@ -6,6 +6,7 @@ import zoneinfo
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
+from homeassistant.components.sensor import DOMAIN as SENSOR_DOMAIN
 from homeassistant.config_entries import (
     ConfigFlow,
     OptionsFlowWithReload,
@@ -13,6 +14,8 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_DEVICE_ID, CONF_NAME
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
@@ -20,6 +23,7 @@ from homeassistant.helpers.selector import (
 
 from .const import (
     CONF_ELECTRICITY_TARIFF_TYPE,
+    CONF_ELECTRICITY_UNIT_RATE_ENTITY,
     CONF_TIME_ZONE_ELECTRICITY,
     CONF_TIME_ZONE_GAS,
     CONF_TOPIC_PREFIX,
@@ -28,8 +32,7 @@ from .const import (
     DEFAULT_NAME,
     DEFAULT_TOPIC_PREFIX,
     DOMAIN,
-    ELECTRICITY_TARIFF_TYPE_FIXED,
-    ELECTRICITY_TARIFF_TYPE_VARIABLE,
+    ELECTRICITY_TARIFF_TYPES,
 )
 from .helpers import (
     entry_title,
@@ -83,7 +86,7 @@ def _device_schema(defaults: Mapping[str, Any]) -> dict[vol.Marker, Any]:
 def _electricity_tariff_schema(
     defaults: Mapping[str, Any],
 ) -> dict[vol.Marker, Any]:
-    """Return the form field for fixed or variable electricity rates."""
+    """Return the form field for a fixed or variable electricity tariff."""
     return {
         vol.Required(
             CONF_ELECTRICITY_TARIFF_TYPE,
@@ -93,19 +96,25 @@ def _electricity_tariff_schema(
             ),
         ): SelectSelector(
             SelectSelectorConfig(
-                options=[
-                    {
-                        "value": ELECTRICITY_TARIFF_TYPE_FIXED,
-                        "label": "Fixed tariff",
-                    },
-                    {
-                        "value": ELECTRICITY_TARIFF_TYPE_VARIABLE,
-                        "label": "Variable tariff",
-                    },
-                ],
+                options=list(ELECTRICITY_TARIFF_TYPES),
                 mode=SelectSelectorMode.DROPDOWN,
+                translation_key=CONF_ELECTRICITY_TARIFF_TYPE,
             ),
         ),
+    }
+
+
+def _unit_rate_entity_schema(
+    defaults: Mapping[str, Any],
+) -> dict[vol.Marker, Any]:
+    """Return the form field for a sensor to read the unit rate from."""
+    return {
+        vol.Optional(
+            CONF_ELECTRICITY_UNIT_RATE_ENTITY,
+            description={
+                "suggested_value": defaults.get(CONF_ELECTRICITY_UNIT_RATE_ENTITY),
+            },
+        ): EntitySelector(EntitySelectorConfig(domain=SENSOR_DOMAIN)),
     }
 
 
@@ -308,7 +317,7 @@ class HildebrandGlowIHDMQTTConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class HildebrandGlowIHDMQTTOptionsFlowHandler(OptionsFlowWithReload):
-    """Change the meters' time zones, then reload the entry to apply them.
+    """Change the tariff and time zones, then reload the entry to apply them.
 
     The device ID and topic prefix are changed with Reconfigure instead, so
     the entry's unique ID and title stay in step with them.
@@ -325,9 +334,13 @@ class HildebrandGlowIHDMQTTOptionsFlowHandler(OptionsFlowWithReload):
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
-                await _async_time_zone_schema(  # type: ignore[arg-type]
-                    self.hass,
-                    entry_settings(self.config_entry),
-                ),
+                {  # type: ignore[arg-type]
+                    **_electricity_tariff_schema(entry_settings(self.config_entry)),
+                    **_unit_rate_entity_schema(entry_settings(self.config_entry)),
+                    **await _async_time_zone_schema(
+                        self.hass,
+                        entry_settings(self.config_entry),
+                    ),
+                },
             ),
         )
